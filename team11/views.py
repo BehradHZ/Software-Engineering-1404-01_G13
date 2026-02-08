@@ -3,6 +3,7 @@ import os
 import logging
 import random
 import threading
+from django.db import close_old_connections
 from django.db.models import Avg
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404
@@ -24,6 +25,8 @@ TEAM_NAME = "team11"
 
 def _process_writing_assessment(submission_id, topic, text_body, word_count):
     try:
+        close_old_connections()
+        logger.info(f"Writing background task started: {submission_id}")
         assessment_result = assess_writing(topic, text_body, word_count)
         submission = Submission.objects.using('team11').get(submission_id=submission_id)
 
@@ -60,6 +63,7 @@ def _process_writing_assessment(submission_id, topic, text_body, word_count):
     except Exception as e:
         logger.error(f"Background writing assessment error: {e}", exc_info=True)
         try:
+            close_old_connections()
             submission = Submission.objects.using('team11').get(submission_id=submission_id)
             submission.status = AnalysisStatus.FAILED
             submission.save()
@@ -69,6 +73,8 @@ def _process_writing_assessment(submission_id, topic, text_body, word_count):
 
 def _process_listening_assessment(submission_id, listening_detail_pk, audio_file_path, topic, duration, temp_file_path=None):
     try:
+        close_old_connections()
+        logger.info(f"Speaking background task started: {submission_id}")
         assessment_result = assess_speaking(topic, audio_file_path, duration)
         submission = Submission.objects.using('team11').get(submission_id=submission_id)
         listening_detail = ListeningSubmission.objects.using('team11').get(pk=listening_detail_pk)
@@ -114,6 +120,7 @@ def _process_listening_assessment(submission_id, listening_detail_pk, audio_file
     except Exception as e:
         logger.error(f"Background listening assessment error: {e}", exc_info=True)
         try:
+            close_old_connections()
             submission = Submission.objects.using('team11').get(submission_id=submission_id)
             submission.status = AnalysisStatus.FAILED
             submission.save()
@@ -152,12 +159,35 @@ def dashboard(request):
     
     completed_submissions = submissions.filter(status=AnalysisStatus.COMPLETED, overall_score__isnull=False)
     completed_count = completed_submissions.count()
-    avg_score = completed_submissions.aggregate(avg=Avg('overall_score'))['avg']
+
+    writing_completed = completed_submissions.filter(submission_type=SubmissionType.WRITING).order_by('created_at')
+    speaking_completed = completed_submissions.filter(submission_type=SubmissionType.LISTENING).order_by('created_at')
+
+    writing_avg = writing_completed.aggregate(avg=Avg('overall_score'))['avg']
+    speaking_avg = speaking_completed.aggregate(avg=Avg('overall_score'))['avg']
+
+    writing_series = [
+        {
+            'date': s.created_at.strftime('%Y/%m/%d'),
+            'score': s.overall_score,
+        }
+        for s in writing_completed
+    ]
+    speaking_series = [
+        {
+            'date': s.created_at.strftime('%Y/%m/%d'),
+            'score': s.overall_score,
+        }
+        for s in speaking_completed
+    ]
 
     context = {
         'submissions': submissions,
         'completed_count': completed_count,
-        'avg_score': round(avg_score, 2) if avg_score is not None else 0,
+        'writing_avg': round(writing_avg, 2) if writing_avg is not None else 0,
+        'speaking_avg': round(speaking_avg, 2) if speaking_avg is not None else 0,
+        'writing_series': writing_series,
+        'speaking_series': speaking_series,
     }
     return render(request, f"{TEAM_NAME}/dashboard.html", context)
 
@@ -437,6 +467,14 @@ def submission_detail(request, submission_id):
         submission_id=submission_id,
         user_id=request.user.id
     )
+
+    if submission.status in [AnalysisStatus.IN_PROGRESS, AnalysisStatus.PENDING]:
+        return render(request, f"{TEAM_NAME}/submission_detail.html", {
+            'submission': submission,
+            'details': None,
+            'result': None,
+            'processing': True,
+        })
     
     # Get type-specific details using select_related (OneToOne relationship)
     details = None
@@ -455,6 +493,7 @@ def submission_detail(request, submission_id):
         'submission': submission,
         'details': details,
         'result': submission.assessment_result if hasattr(submission, 'assessment_result') else None,
+        'processing': False,
     }
     return render(request, f"{TEAM_NAME}/submission_detail.html", context)
 

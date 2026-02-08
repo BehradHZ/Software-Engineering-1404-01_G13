@@ -93,15 +93,25 @@
               <div style="background: var(--bg-cream); padding: 15px 25px; border-radius: 10px;">
                 <div style="font-size: 0.9rem; color: var(--dark-blue); margin-bottom: 5px;">نمره کل</div>
                 <div style="font-size: 2rem; font-weight: bold; color: var(--navy);" data-score-value>
-                  {% if submission.overall_score %}{{ submission.overall_score }}{% else %}0{% endif %}
+                      {% if submission.overall_score %}
+                        {{ submission.overall_score }}
+                      {% elif submission.status == 'in_progress' or submission.status == 'pending' %}
+                        —
+                      {% else %}
+                        0
+                      {% endif %}
                 </div>
               </div>
             </div>
 
             <div>
-              <a href="{% url 'team11_submission_detail' submission.submission_id %}" class="btn btn-secondary" style="text-decoration: none; padding: 10px 25px; display: inline-block;">
-                جزئیات
-              </a>
+              {% if submission.status == 'completed' or submission.status == 'failed' %}
+                <a href="{% url 'team11_submission_detail' submission.submission_id %}" class="btn btn-secondary" style="text-decoration: none; padding: 10px 25px; display: inline-block;">
+                  جزئیات
+                </a>
+              {% else %}
+                <span style="color: #999;">بازخورد نرسیده</span>
+              {% endif %}
             </div>
 
           </div>
@@ -123,8 +133,25 @@
           </div>
           
           <div style="background: white; padding: 25px; border-radius: 15px; text-align: center;">
-            <div style="font-size: 2rem; color: var(--navy); font-weight: bold;">{{ avg_score }}</div>
-            <div style="color: var(--dark-blue); margin-top: 5px;">میانگین نمرات</div>
+            <div style="font-size: 2rem; color: var(--navy); font-weight: bold;">{{ writing_avg }}</div>
+            <div style="color: var(--dark-blue); margin-top: 5px;">میانگین نوشتن</div>
+          </div>
+
+          <div style="background: white; padding: 25px; border-radius: 15px; text-align: center;">
+            <div style="font-size: 2rem; color: var(--navy); font-weight: bold;">{{ speaking_avg }}</div>
+            <div style="color: var(--dark-blue); margin-top: 5px;">میانگین صحبت کردن</div>
+          </div>
+        </div>
+
+        <!-- Progress Charts -->
+        <div style="margin-top: 50px; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px;">
+          <div style="background: white; padding: 25px; border-radius: 15px;">
+            <h3 style="color: var(--navy); margin-bottom: 15px; text-align: center;">روند نمرات نوشتن</h3>
+            <canvas id="writingChart" height="200"></canvas>
+          </div>
+          <div style="background: white; padding: 25px; border-radius: 15px;">
+            <h3 style="color: var(--navy); margin-bottom: 15px; text-align: center;">روند نمرات صحبت کردن</h3>
+            <canvas id="speakingChart" height="200"></canvas>
           </div>
         </div>
 
@@ -210,7 +237,53 @@
     }
   </style>
 
+  {{ writing_series|json_script:"writing-series" }}
+  {{ speaking_series|json_script:"speaking-series" }}
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
   <script>
+    function buildChart(canvasId, series, label, color) {
+      const ctx = document.getElementById(canvasId);
+      if (!ctx) return;
+
+      const labels = series.map(item => item.date);
+      const data = series.map(item => item.score);
+
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label,
+            data,
+            borderColor: color,
+            backgroundColor: color + '33',
+            tension: 0.3,
+            fill: true,
+            pointRadius: 3,
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            tooltip: { rtl: true }
+          },
+          scales: {
+            x: { ticks: { maxRotation: 0 }, grid: { display: false } },
+            y: { beginAtZero: true, suggestedMax: 100 }
+          }
+        }
+      });
+    }
+
+    const writingSeries = JSON.parse(document.getElementById('writing-series').textContent || '[]');
+    const speakingSeries = JSON.parse(document.getElementById('speaking-series').textContent || '[]');
+
+    buildChart('writingChart', writingSeries, 'نوشتن', '#3b5fbf');
+    buildChart('speakingChart', speakingSeries, 'صحبت کردن', '#e07a5f');
+
     function updateCard(card, data) {
       const statusBadge = card.querySelector('[data-status-text]');
       const scoreContainer = card.querySelector('[data-score-container]');
@@ -245,7 +318,7 @@
         scoreContainer.innerHTML = `
           <div style="background: var(--bg-cream); padding: 15px 25px; border-radius: 10px;">
             <div style="font-size: 0.9rem; color: var(--dark-blue); margin-bottom: 5px;">نمره کل</div>
-            <div style="font-size: 2rem; font-weight: bold; color: var(--navy);">0</div>
+            <div style="font-size: 2rem; font-weight: bold; color: var(--navy);">—</div>
           </div>
         `;
       }
